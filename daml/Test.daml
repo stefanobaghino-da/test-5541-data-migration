@@ -65,6 +65,10 @@ run = do
   privateAssetsSeenByOwner <- query @PrivateAsset owner
   assertEq ["second"] (map ((name : PrivateAsset -> Text) . snd) privateAssetsSeenByOwner)
 
+  -- expect the owner to be able to use its contracts
+  submit owner do
+    exerciseCmd (head $ map fst privateAssetsSeenByOwner) PrivateUse
+
   -- expect the divulgee to be able to read the divulged asset from the active contract service
   divulgedAssets <- query @DivulgedAsset divulgee
   assert $ length (map snd divulgedAssets) == 1
