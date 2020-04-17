@@ -1,0 +1,105 @@
+-- Copyright (c) 2020 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+module Main where
+
+template DivulgeableAsset
+  with
+    owner: Party
+    divulgee: Party
+    name: Text
+  where
+    signatory owner
+
+    nonconsuming choice Use: ()
+      controller divulgee
+      do
+        return ()
+
+template PrivateAsset
+  with
+    owner: Party
+    someone: Party
+    name: Text
+  where
+    signatory owner
+
+    nonconsuming choice PrivateUse: ()
+      controller owner
+      do
+        return ()
+
+    nonconsuming choice ImpossibleUse: ()
+      controller someone
+      do
+        return ()
+
+template DivulgeAsset
+  with
+    owner: Party
+    divulgee: Party
+  where
+    signatory divulgee
+
+    controller owner can
+      Divulge: ()
+        with
+          toDivulge: ContractId DivulgeableAsset
+        do
+          asset <- fetch toDivulge
+          _ <- create DivulgedAsset with
+              owner = owner
+              divulgee = divulgee
+              assetId = toDivulge
+          return ()
+
+-- Used to persist and read the divulged asset contract identifier across runs
+template DivulgedAsset
+  with
+    owner: Party
+    divulgee: Party
+    assetId: ContractId DivulgeableAsset
+  where
+    signatory owner, divulgee
+  
+
+setup = scenario do
+  -- at the end of this scenario:
+  -- * divulgeableAsset is active and divulged to divulgee
+  -- * a `DivulgedAsset` is created so that the divulgee can
+  --   read the divulged contract identifier back from the ledger
+  -- * privateAsset is active but has not been divulged
+  -- * divulgeFirstAsset has been consumed
+
+  owner <- getParty "owner"
+  divulgee <- getParty "divulgee"
+
+  divulgeableAsset <- submit owner do
+    create DivulgeableAsset with
+      owner = owner
+      divulgee = divulgee
+      name = "first"
+
+  submitMustFail divulgee do exercise divulgeableAsset Use
+
+  divulgeFirstAsset <- submit divulgee do
+    create DivulgeAsset with
+      owner = owner
+      divulgee = divulgee
+
+  submitMustFail divulgee do exercise divulgeableAsset Use
+
+  submit owner do
+    exercise divulgeFirstAsset Divulge with toDivulge = divulgeableAsset
+
+  submit divulgee do
+    exercise divulgeableAsset Use
+  
+  privateAsset <- submit owner do
+    create PrivateAsset with
+      owner = owner
+      someone = divulgee
+      name = "second"
+
+  submit owner do exercise privateAsset PrivateUse
+  submitMustFail divulgee do exercise privateAsset ImpossibleUse

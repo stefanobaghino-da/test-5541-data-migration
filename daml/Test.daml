@@ -1,0 +1,78 @@
+-- Copyright (c) 2020 Digital Asset (Switzerland) GmbH and/or its affiliates. All rights reserved.
+-- SPDX-License-Identifier: Apache-2.0
+
+
+module Test where
+
+import Daml.Script
+
+import DA.Assert
+import DA.List
+import DA.Optional.Total
+
+import Main
+
+-- parties: this script _assumes_ to run on an open-world ledger (parties just
+-- _exist_, i.e. they are allocated implicitly on their first appearance)
+
+-- see the scenario in the main module.
+-- * divulgeableAsset is active and divulged to divulgee
+-- * a `DivulgedAsset` is created so that the divulgee can
+--   read the divulged contract identifier back from the ledger
+-- * privateAsset is active but has not been divulged
+-- * divulgeFirstAsset has been consumed
+init : Script ()
+init = do
+  owner <- fromSome $ partyFromText "owner"
+  divulgee <- fromSome $ partyFromText "divulgee"
+
+  divulgeableAsset <- submit owner do
+    createCmd DivulgeableAsset with
+      owner = owner
+      divulgee = divulgee
+      name = "first"
+
+  divulgeFirstAsset <- submit divulgee do
+    createCmd DivulgeAsset with
+      owner = owner
+      divulgee = divulgee
+
+  submit owner do
+    exerciseCmd divulgeFirstAsset Divulge with toDivulge = divulgeableAsset
+
+  submit divulgee do
+    exerciseCmd divulgeableAsset Use
+  
+  private <- submit owner do
+    createCmd PrivateAsset with
+      owner = owner
+      someone = divulgee
+      name = "second"
+
+  pure ()
+
+-- validate that the post-condition of `init` holds
+run : Script ()
+run = do
+  owner <- fromSome $ partyFromText "owner"
+  divulgee <- fromSome $ partyFromText "divulgee"
+
+  -- expect the owner to see both the divulgeable...
+  divulgeableAssetsSeenByOwner <- query @DivulgeableAsset owner
+  assertEq ["first"] (map ((name : DivulgeableAsset -> Text) . snd) divulgeableAssetsSeenByOwner)
+
+  -- ... and the private asset
+  privateAssetsSeenByOwner <- query @PrivateAsset owner
+  assertEq ["second"] (map ((name : PrivateAsset -> Text) . snd) privateAssetsSeenByOwner)
+
+  -- expect the divulgee to be able to read the divulged asset from the active contract service
+  divulgedAssets <- query @DivulgedAsset divulgee
+  assert $ length (map snd divulgedAssets) == 1
+
+  let divulgedAssetId = head (map (assetId . snd) divulgedAssets)
+
+  -- expect the divulgee to be able to use the divulged contract
+  submit divulgee do
+    exerciseCmd divulgedAssetId Use
+
+  pure ()
